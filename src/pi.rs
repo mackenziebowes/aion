@@ -25,6 +25,14 @@ fn turn(v: &serde_json::Value) -> Option<(Tally, String, String)> {
 }
 
 /// Starts pi, feeds `state` from the stream, and returns the final state. Kills pi when the machine says Kill.
+/// The attachments, then `--`, then the prompt: after `--` pi reads a prompt that starts with a dash as the prompt, not a flag.
+fn prompt_args(r: &Run) -> Vec<std::ffi::OsString> {
+    let mut v: Vec<std::ffi::OsString> = r.attach.iter().map(|f| format!("@{}", f.display()).into()).collect();
+    v.push("--".into());
+    v.push(r.prompt.into());
+    v
+}
+
 pub fn run(r: &Run, mut state: State, caps: Caps) -> State {
     let mut cmd = Command::new("pi");
     cmd.args(["--provider", "openrouter", "--model", "aion-labs/aion-3.5", "--no-tools", "--no-mcp", "--no-context-files", "--no-skills", "--mode", "json", "-p"])
@@ -34,8 +42,7 @@ pub fn run(r: &Run, mut state: State, caps: Caps) -> State {
         Session::Start(d) => { cmd.arg("--session-dir").arg(d); }
         Session::Continue(d) => { cmd.arg("--session-dir").arg(d).arg("-c"); }
     }
-    for f in r.attach { cmd.arg(format!("@{}", f.display())); }
-    cmd.arg(r.prompt).current_dir(r.dir).env("OPENROUTER_API_KEY", r.key).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    cmd.args(prompt_args(r)).current_dir(r.dir).env("OPENROUTER_API_KEY", r.key).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return State::Failed { tally: Tally::default(), why: if e.kind() == std::io::ErrorKind::NotFound { "pi is not installed (aion runs Aion through the pi agent, https://github.com/earendil-works/pi: `mise use -g pi`, or `bun add -g @earendil-works/pi-coding-agent`)".to_string() } else { format!("could not start pi: {e}") } },
@@ -55,4 +62,17 @@ pub fn run(r: &Run, mut state: State, caps: Caps) -> State {
     let stderr = err_reader.join().unwrap_or_default();
     let ok = status.map(|s| s.success()).unwrap_or(false);
     step(state, Event::Exited { ok, stderr }, caps).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_prompt_that_starts_with_a_dash_comes_after_double_dash() {
+        let attach = [PathBuf::from("/tmp/notes.md")];
+        let r = Run { prompt: "-5 degrees is cold, why?", attach: &attach, system: "", session: Session::OneOff, dir: Path::new("."), key: "" };
+        let args: Vec<_> = prompt_args(&r).iter().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(args, ["@/tmp/notes.md", "--", "-5 degrees is cold, why?"]);
+    }
 }

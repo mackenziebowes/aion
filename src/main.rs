@@ -50,6 +50,8 @@ fn parse(args: Vec<String>) -> Result<Command, String> {
                     "--dir" => return Err("--dir is gone: Aion has no tools and reads nothing itself; attach what it needs with --attach FILE".into()),
                     "--session" => session = Some(it.next().ok_or("--session needs a name")?),
                     "--persona" => persona = Some(it.next().ok_or("--persona needs a file")?.into()),
+                    "--" => { words.extend(it.by_ref()); break; }
+                    f if f.starts_with("--") && !f.contains(char::is_whitespace) => return Err(format!("unknown option {f}; to ask a question that starts with --, put -- before it")),
                     _ => words.push(a),
                 }
             }
@@ -174,5 +176,26 @@ fn main() -> ExitCode {
         Ok(Command::Transcript(n)) => transcript(&n),
         Ok(Command::Ask { prompt, mode, attach }) => ask(prompt, mode, attach),
         Err(e) => fail(&e, 2),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn args(a: &[&str]) -> Vec<String> { a.iter().map(|s| s.to_string()).collect() }
+
+    #[test]
+    fn a_mistyped_flag_is_an_error_not_part_of_the_prompt() {
+        match parse(args(&["ask", "--attch", "notes.md", "q"])) {
+            Err(e) => assert!(e.contains("unknown option --attch"), "{e}"),
+            Ok(_) => panic!("--attch was accepted as part of the prompt"),
+        }
+    }
+
+    #[test]
+    fn a_prompt_may_start_with_a_dash_or_follow_double_dash() {
+        let prompt = |a: &[&str]| match parse(args(a)) { Ok(Command::Ask { prompt, .. }) => prompt, _ => panic!("not an ask") };
+        assert_eq!(prompt(&["ask", "-5 degrees is cold, why?"]), "-5 degrees is cold, why?");
+        assert_eq!(prompt(&["ask", "--", "--attch is a flag name"]), "--attch is a flag name");
     }
 }
